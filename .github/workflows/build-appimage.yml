@@ -46,7 +46,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build and stage game release
-        run: cargo run --release -p publish -- target/publish
+        run: |
+          rm -rf target/publish
+          cargo run --release -p publish -- target/publish
 
       - name: Assemble AppDir
         run: |
