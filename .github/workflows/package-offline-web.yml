@@ -1,0 +1,164 @@
+
+name: Package Offline ChipDX
+
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download official browser game
+        shell: bash
+        run: |
+          mkdir -p dist/ChipDX/web
+
+          BASE="https://casualhacks.net/chipdx"
+
+          FILES=(
+            index.html
+            index.js
+            shade.js
+            alpine.min.js
+            index.css
+            chipwasm.wasm
+            menubg.png
+            favicon.ico
+          )
+
+          for file in "${FILES[@]}"; do
+            echo "Downloading $file..."
+            curl --fail --location --retry 3 \
+              "$BASE/$file" \
+              -o "dist/ChipDX/web/$file"
+          done
+
+      - name: Build lightweight web server
+        run: |
+          git clone --depth 1 \
+            https://github.com/emikulic/darkhttpd.git \
+            /tmp/darkhttpd
+
+          make -C /tmp/darkhttpd
+
+          cp /tmp/darkhttpd/darkhttpd dist/ChipDX/darkhttpd
+          chmod +x dist/ChipDX/darkhttpd
+
+      - name: Create launcher
+        run: |
+          cat > dist/ChipDX/Launch-ChipDX.sh <<'EOF'
+          #!/bin/bash
+
+          ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+          PIDFILE="$ROOT/.chipdx-server.pid"
+          LOGFILE="$ROOT/server.log"
+
+          # Stop an older server instance if one exists.
+          if [ -f "$PIDFILE" ]; then
+              OLD_PID=$(head -n 1 "$PIDFILE")
+              kill "$OLD_PID" 2>/dev/null || true
+              rm -f "$PIDFILE"
+          fi
+
+          # Find an available local port.
+          for PORT in $(seq 20000 45000); do
+              "$ROOT/darkhttpd" "$ROOT/web" \
+                  --addr 127.0.0.1 --port "$PORT" \
+                  > "$LOGFILE" 2>&1 &
+
+              SERVER_PID=$!
+              sleep 0.2
+
+              if kill -0 "$SERVER_PID" 2>/dev/null; then
+                  break
+              fi
+
+              wait "$SERVER_PID" 2>/dev/null || true
+              SERVER_PID=""
+          done
+
+          if [ -z "$SERVER_PID" ]; then
+              echo "Could not start the local game server."
+              read -r -p "Press Enter to close..."
+              exit 1
+          fi
+
+          printf '%s\n%s\n' "$SERVER_PID" "$PORT" > "$PIDFILE"
+
+          URL="http://127.0.0.1:$PORT/"
+
+          if command -v firefox >/dev/null 2>&1; then
+              firefox --new-window "$URL" >/dev/null 2>&1 &
+          elif command -v xdg-open >/dev/null 2>&1; then
+              xdg-open "$URL" >/dev/null 2>&1 &
+          else
+              echo "Firefox or xdg-open is required."
+              kill "$SERVER_PID" 2>/dev/null || true
+              rm -f "$PIDFILE"
+              exit 1
+          fi
+          EOF
+
+          chmod +x dist/ChipDX/Launch-ChipDX.sh
+
+      - name: Create stop script
+        run: |
+          cat > dist/ChipDX/Stop-ChipDX.sh <<'EOF'
+          #!/bin/bash
+
+          ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+          PIDFILE="$ROOT/.chipdx-server.pid"
+
+          if [ -f "$PIDFILE" ]; then
+              PID=$(head -n 1 "$PIDFILE")
+              kill "$PID" 2>/dev/null || true
+              rm -f "$PIDFILE"
+              echo "ChipDX server stopped."
+          else
+              echo "ChipDX server is not running."
+          fi
+          EOF
+
+          chmod +x dist/ChipDX/Stop-ChipDX.sh
+
+      - name: Create instructions
+        run: |
+          cat > dist/ChipDX/README.txt <<'EOF'
+          CHIP'S CHALLENGE DX - OFFLINE LINUX VERSION
+
+          REQUIREMENTS
+          - Linux x86_64
+          - Firefox (or another browser)
+          - WebGL2-compatible graphics
+
+          TO PLAY
+          1. Extract this folder anywhere you like.
+          2. Double-click Launch-ChipDX.sh.
+          3. If prompted, choose "Run" or "Execute".
+
+          TO STOP
+          Run Stop-ChipDX.sh.
+
+          The game runs entirely locally.
+          No internet connection is needed after extraction.
+
+          Game files are downloaded from:
+          https://casualhacks.net/chipdx/
+
+          The web server listens only on 127.0.0.1.
+          EOF
+
+      - name: Package ZIP
+        run: |
+          cd dist
+          zip -r "$GITHUB_WORKSPACE/ChipDX-offline-linux-x86_64.zip" ChipDX
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChipDX-offline-linux-x86_64
+          path: ChipDX-offline-linux-x86_64.zip
