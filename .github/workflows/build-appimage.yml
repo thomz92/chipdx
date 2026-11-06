@@ -1,0 +1,121 @@
+
+name: Build Linux AppImage
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libasound2-dev \
+            libudev-dev \
+            libx11-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libgl1-mesa-dev \
+            libfuse2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build and stage game release
+        run: cargo run --release -p publish -- target/publish
+
+      - name: Assemble AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/chipdx
+
+          cp target/publish/chipplay AppDir/usr/bin/
+          cp target/publish/chipedit AppDir/usr/bin/
+          cp -a target/publish/. AppDir/usr/share/chipdx/
+
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          APPDIR="$(dirname "$(readlink -f "$0")")"
+
+          # Keep save files and user settings outside the read-only AppImage.
+          RUNDIR="${XDG_DATA_HOME:-$HOME/.local/share}/chipdx"
+          mkdir -p "$RUNDIR/save"
+
+          cp -u "$APPDIR/usr/share/chipdx/chipdx.ini" "$RUNDIR/"
+          cp -au "$APPDIR/usr/share/chipdx/data.paks" "$RUNDIR/"
+          cp -au "$APPDIR/usr/share/chipdx/levelsets" "$RUNDIR/"
+
+          cd "$RUNDIR"
+          exec "$APPDIR/usr/bin/chipplay" "$@"
+          EOF
+
+          chmod +x AppDir/AppRun
+
+          cat > AppDir/chipdx.desktop <<'EOF'
+          [Desktop Entry]
+          Name=Chip's Challenge DX
+          Comment=Play Chip's Challenge DX
+          Exec=chipdx
+          Icon=chipdx
+          Type=Application
+          Categories=Game;
+          Terminal=false
+          EOF
+
+          cat > AppDir/chipdx.svg <<'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+            <rect width="128" height="128" rx="18" fill="#263b50"/>
+            <rect x="16" y="16" width="96" height="96" rx="8" fill="#d6e5ec"/>
+            <path d="M32 32h24v24H32zM72 32h24v24H72zM32 72h24v24H32zM72 72h24v24H72z" fill="#527b91"/>
+            <path d="M56 44h16v40H56z" fill="#e4a83b"/>
+            <path d="M44 56h40v16H44z" fill="#e4a83b"/>
+          </svg>
+          EOF
+
+      - name: Download AppImage tools
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-plugin-appimage-x86_64.AppImage
+
+      - name: Create AppImage
+        run: |
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export OUTPUT=ChipDX-x86_64.AppImage
+
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --executable AppDir/usr/bin/chipplay \
+            --executable AppDir/usr/bin/chipedit \
+            --desktop-file AppDir/chipdx.desktop \
+            --icon-file AppDir/chipdx.svg \
+            --plugin appimage \
+            --output appimage
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChipDX-Linux-AppImage
+          path: ChipDX-x86_64.AppImage
+          if-no-files-found: error
