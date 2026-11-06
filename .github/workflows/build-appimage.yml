@@ -23,6 +23,7 @@ jobs:
             build-essential \
             cmake \
             pkg-config \
+            libatk1.0-dev \
             libasound2-dev \
             libudev-dev \
             libx11-dev \
