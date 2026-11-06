@@ -114,7 +114,6 @@ jobs:
             --executable AppDir/usr/bin/chipedit \
             --desktop-file AppDir/chipdx.desktop \
             --icon-file AppDir/chipdx.svg \
-            --plugin appimage \
             --output appimage
 
       - name: Upload AppImage
